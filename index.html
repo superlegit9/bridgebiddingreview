@@ -78,19 +78,34 @@
     margin-bottom: 2px;
   }
 
-  .upload-zone {
-    border: 2px dashed #444;
-    border-radius: 10px;
-    padding: 24px;
-    text-align: center;
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     width: 100%;
-    cursor: pointer;
-    color: #999;
-    margin-bottom: 20px;
+    margin-bottom: 12px;
   }
-  .upload-zone:hover, .upload-zone.drag { border-color: #7aa2ff; color: #ccc; }
-  .upload-zone input { display: none; }
-  .status { font-size: 12px; color: #7aa2ff; min-height: 16px; margin-bottom: 8px; }
+  .refresh-btn {
+    background: #1a1d22;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 6px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .refresh-btn:hover { border-color: #7aa2ff; color: #fff; }
+  .status { font-size: 12px; color: #7aa2ff; min-height: 16px; }
+  .empty-state {
+    color: #666;
+    font-size: 13px;
+    text-align: center;
+    padding: 40px 20px;
+    background: #1a1d22;
+    border-radius: 12px;
+    width: 100%;
+  }
+
   .slideshow {
     width: 100%;
     background: #1a1d22;
@@ -118,12 +133,6 @@
   .nav-btn:hover { background: rgba(0,0,0,0.75); }
   .nav-btn.prev { left: 12px; }
   .nav-btn.next { right: 12px; }
-  .delete-btn {
-    position: absolute; top: 10px; right: 10px;
-    background: rgba(0,0,0,0.5); border: none; color: #fff;
-    font-size: 13px; padding: 4px 9px; border-radius: 6px; cursor: pointer;
-  }
-  .delete-btn:hover { background: #c0392b; }
   .counter { text-align: center; padding: 10px 0 4px; font-size: 13px; color: #999; }
   .dots { display: flex; justify-content: center; gap: 6px; padding: 4px 0 14px; flex-wrap: wrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; border: none; padding: 0; }
@@ -157,18 +166,20 @@
   </div>
 
   <div class="main-col">
-    <label class="upload-zone" id="uploadZone">
-      Click or drag images here to upload
-      <input type="file" id="fileInput" accept="image/*" multiple>
-    </label>
-    <div class="status" id="status"></div>
+    <div class="toolbar">
+      <div class="status" id="status">Loading photos from Drive...</div>
+      <button class="refresh-btn" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="empty-state" id="emptyState" style="display:none">
+      No images found in the Drive folder. Add photos there, then click Refresh.
+    </div>
 
     <div class="slideshow" id="slideshow">
       <div class="slide-viewport">
         <button class="nav-btn prev" id="prevBtn">&#10094;</button>
         <img id="slideImg" src="" alt="">
         <button class="nav-btn next" id="nextBtn">&#10095;</button>
-        <button class="delete-btn" id="deleteBtn">Delete</button>
       </div>
       <div class="counter" id="counter"></div>
       <div class="dots" id="dots"></div>
@@ -196,9 +207,9 @@
 <!-- Firebase SDKs (compat build, no bundler required) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 
 <script>
+// ---- Config ----
 const firebaseConfig = {
   apiKey: "AIzaSyCem5EbVUeKJUihyEppP1iPEh6aYNNvKhc",
   authDomain: "coaching-u26.firebaseapp.com",
@@ -208,22 +219,25 @@ const firebaseConfig = {
   appId: "1:928921692411:web:b95f23533ee39461db685e"
 };
 
+const DRIVE_API_KEY = "AIzaSyDw-2QQ45WRplv8HMCqNF9dvF-kGf_dB7Y";
+const DRIVE_FOLDER_ID = "1Jz-KEPQmKMsSQrRWnbpTyUC69F2SQ2lk";
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-const storage = firebase.storage();
 
-// Single shared doc holding image list; each image carries its own
-// {TW, TXH, ZYK} comment fields (comments are per-slide/per-picture).
+// Firestore doc holds only the comments, keyed by Drive file ID
+// (the image list itself always comes live from Drive, not from Firestore).
 const DOC_REF = db.collection('slideshows').doc('main');
 const FIELDS = ['TW', 'TXH', 'ZYK'];
 
-let images = []; // [{url, path, comments: {TW, TXH, ZYK}}]
+let images = []; // [{id, name, url}]
+let commentsMap = {}; // { [driveFileId]: {TW, TXH, ZYK} }
 let current = 0;
 let saveTimer = null;
 
-const uploadZone = document.getElementById('uploadZone');
-const fileInput = document.getElementById('fileInput');
 const statusEl = document.getElementById('status');
+const refreshBtn = document.getElementById('refreshBtn');
+const emptyState = document.getElementById('emptyState');
 const slideshow = document.getElementById('slideshow');
 const slideImg = document.getElementById('slideImg');
 const counter = document.getElementById('counter');
@@ -232,121 +246,63 @@ const thumbs = document.getElementById('thumbs');
 const comments = document.getElementById('comments');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
-const deleteBtn = document.getElementById('deleteBtn');
 const saveNote = document.getElementById('saveNote');
 const sidebar = document.getElementById('sidebar');
 const fieldEls = { TW: document.getElementById('commentTW'), TXH: document.getElementById('commentTXH'), ZYK: document.getElementById('commentZYK') };
 
 function blankComments() { return { TW: '', TXH: '', ZYK: '' }; }
+function driveImageUrl(id) { return `https://drive.google.com/thumbnail?id=${id}&sz=w1600`; }
 
-// ---- Load existing state on page load ----
-async function loadState() {
+// ---- Load comments from Firestore ----
+async function loadComments() {
   const snap = await DOC_REF.get();
-  if (snap.exists) {
-    const data = snap.data();
-    images = (data.images || []).map(img => ({
-      url: img.url,
-      path: img.path,
-      comments: { ...blankComments(), ...(img.comments || {}) }
-    }));
-    current = 0;
-    render();
+  commentsMap = snap.exists ? (snap.data().comments || {}) : {};
+}
+
+// ---- List images from the Drive folder ----
+async function loadImages() {
+  statusEl.textContent = 'Loading photos from Drive...';
+  const q = encodeURIComponent(`'${DRIVE_FOLDER_ID}' in parents and mimeType contains 'image/' and trashed = false`);
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&key=${DRIVE_API_KEY}&fields=files(id,name)&orderBy=name&pageSize=1000`;
+
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) {
+      statusEl.textContent = `Drive error: ${data.error.message}`;
+      console.error('Drive API error:', data.error);
+      return;
+    }
+    images = (data.files || []).map(f => ({ id: f.id, name: f.name, url: driveImageUrl(f.id) }));
+    statusEl.textContent = images.length ? '' : '';
+  } catch (err) {
+    statusEl.textContent = 'Failed to load from Drive — check console.';
+    console.error(err);
   }
 }
-loadState();
 
-// ---- Upload ----
-fileInput.addEventListener('change', e => handleFiles(e.target.files));
-['dragover', 'dragleave', 'drop'].forEach(evt => {
-  uploadZone.addEventListener(evt, e => {
-    e.preventDefault();
-    uploadZone.classList.toggle('drag', evt === 'dragover');
-  });
-});
-uploadZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
-
-// Resize/compress an image file in-browser before upload.
-function compressImage(file, maxDim = 1600, quality = 0.8) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      let { width, height } = img;
-      if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = Math.round(height * (maxDim / width));
-          width = maxDim;
-        } else {
-          width = Math.round(width * (maxDim / height));
-          height = maxDim;
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-      canvas.toBlob(blob => {
-        URL.revokeObjectURL(objectUrl);
-        resolve(blob || file);
-      }, 'image/jpeg', quality);
-    };
-    img.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(file); };
-    img.src = objectUrl;
-  });
-}
-
-async function handleFiles(fileList) {
-  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
-  if (!files.length) return;
-
-  statusEl.textContent = `Uploading 0/${files.length}...`;
-  let done = 0;
-
-  const uploaded = await Promise.all(files.map(async file => {
-    const blob = await compressImage(file);
-    const path = `slideshow/${Date.now()}_${Math.random().toString(36).slice(2)}_${file.name.replace(/\.\w+$/, '.jpg')}`;
-    const ref = storage.ref(path);
-    await ref.put(blob, { contentType: 'image/jpeg' });
-    const url = await ref.getDownloadURL();
-    done++;
-    statusEl.textContent = `Uploading ${done}/${files.length}...`;
-    return { url, path, comments: blankComments() };
-  }));
-
-  images.push(...uploaded);
-  current = images.length - uploaded.length;
-  statusEl.textContent = 'Saving...';
-  await persistImages();
-  statusEl.textContent = '';
+async function refreshAll() {
+  await Promise.all([loadImages(), loadComments()]);
+  current = Math.min(current, Math.max(images.length - 1, 0));
   render();
 }
 
-// ---- Delete current image ----
-deleteBtn.addEventListener('click', async () => {
-  if (!images.length) return;
-  const img = images[current];
-  await storage.ref(img.path).delete().catch(() => {});
-  images.splice(current, 1);
-  current = Math.max(0, current - 1);
-  await persistImages();
-  render();
-});
-
-async function persistImages() {
-  await DOC_REF.set({ images }, { merge: true });
-}
+refreshBtn.addEventListener('click', refreshAll);
+refreshAll();
 
 // ---- Per-slide comment fields: debounce-save on input ----
 FIELDS.forEach(field => {
   fieldEls[field].addEventListener('input', () => {
     if (!images.length) return;
-    images[current].comments[field] = fieldEls[field].value;
-    renderSidebar(); // live-update that slide's swatch colours as you type
+    const id = images[current].id;
+    commentsMap[id] = commentsMap[id] || blankComments();
+    commentsMap[id][field] = fieldEls[field].value;
+    renderSidebar();
 
     saveNote.textContent = 'Saving...';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
-      await persistImages();
+      await DOC_REF.set({ comments: commentsMap }, { merge: true });
       saveNote.textContent = 'Saved';
       setTimeout(() => saveNote.textContent = '', 1200);
     }, 600);
@@ -358,9 +314,11 @@ function render() {
   if (!images.length) {
     slideshow.classList.remove('active');
     comments.classList.remove('active');
+    emptyState.style.display = 'block';
     renderSidebar();
     return;
   }
+  emptyState.style.display = 'none';
   slideshow.classList.add('active');
   comments.classList.add('active');
 
@@ -369,7 +327,8 @@ function render() {
   slideImg.src = img.url;
   counter.textContent = `${current + 1} / ${images.length}`;
 
-  FIELDS.forEach(field => { fieldEls[field].value = img.comments[field] || ''; });
+  const c = commentsMap[img.id] || blankComments();
+  FIELDS.forEach(field => { fieldEls[field].value = c[field] || ''; });
 
   dots.innerHTML = '';
   images.forEach((_, i) => {
@@ -392,18 +351,18 @@ function render() {
 }
 
 function renderSidebar() {
-  // Keep the legend, rebuild the item list below it
   sidebar.querySelectorAll('.sidebar-item').forEach(el => el.remove());
   images.forEach((img, i) => {
+    const c = commentsMap[img.id] || blankComments();
     const item = document.createElement('button');
     item.className = 'sidebar-item' + (i === current ? ' current' : '');
-    item.title = `Slide ${i + 1}`;
+    item.title = `Slide ${i + 1}: ${img.name}`;
 
     const swatch = document.createElement('div');
     swatch.className = 'sidebar-swatch';
     FIELDS.forEach(field => {
       const seg = document.createElement('div');
-      const filled = (img.comments[field] || '').trim().length > 0;
+      const filled = (c[field] || '').trim().length > 0;
       seg.className = 'sidebar-seg ' + (filled ? 'seg-filled' : 'seg-empty');
       swatch.appendChild(seg);
     });
