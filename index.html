@@ -20,12 +20,25 @@
     justify-content: center;
     width: 100%;
   }
-  .main-col {
+  .content-row {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
     width: 100%;
-    max-width: 640px;
+    max-width: 900px;
+  }
+  .slide-col {
+    flex: 1 1 420px;
+    max-width: 480px;
     display: flex;
     flex-direction: column;
     align-items: center;
+  }
+  .comments-col {
+    flex: 1 1 280px;
+    max-width: 320px;
+    position: sticky;
+    top: 24px;
   }
 
   /* Sidebar */
@@ -137,7 +150,7 @@
   .dots { display: flex; justify-content: center; gap: 6px; padding: 4px 0 14px; flex-wrap: wrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; border: none; padding: 0; }
   .dot.active { background: #7aa2ff; }
-  .comments { width: 100%; margin-top: 20px; display: none; }
+  .comments { width: 100%; display: none; }
   .comments.active { display: block; }
   .comment-field { margin-bottom: 14px; }
   .comment-field label { display: block; font-size: 13px; color: #aaa; margin-bottom: 6px; font-weight: 600; }
@@ -165,41 +178,45 @@
     <div class="sidebar-legend">TW&nbsp;/&nbsp;TXH&nbsp;/&nbsp;ZYK</div>
   </div>
 
-  <div class="main-col">
-    <div class="toolbar">
-      <div class="status" id="status">Loading photos from Drive...</div>
-      <button class="refresh-btn" id="refreshBtn">Refresh</button>
+  <div class="content-row">
+    <div class="slide-col">
+      <div class="toolbar">
+        <div class="status" id="status">Loading photos from Drive...</div>
+        <button class="refresh-btn" id="refreshBtn">Refresh</button>
+      </div>
+
+      <div class="empty-state" id="emptyState" style="display:none">
+        No images found in the Drive folder. Add photos there, then click Refresh.
+      </div>
+
+      <div class="slideshow" id="slideshow">
+        <div class="slide-viewport">
+          <button class="nav-btn prev" id="prevBtn">&#10094;</button>
+          <img id="slideImg" src="" alt="">
+          <button class="nav-btn next" id="nextBtn">&#10095;</button>
+        </div>
+        <div class="counter" id="counter"></div>
+        <div class="dots" id="dots"></div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
     </div>
 
-    <div class="empty-state" id="emptyState" style="display:none">
-      No images found in the Drive folder. Add photos there, then click Refresh.
-    </div>
-
-    <div class="slideshow" id="slideshow">
-      <div class="slide-viewport">
-        <button class="nav-btn prev" id="prevBtn">&#10094;</button>
-        <img id="slideImg" src="" alt="">
-        <button class="nav-btn next" id="nextBtn">&#10095;</button>
+    <div class="comments-col">
+      <div class="comments" id="comments">
+        <div class="comment-field">
+          <label for="commentTW">TW</label>
+          <textarea id="commentTW" placeholder="TW's comments on this board"></textarea>
+        </div>
+        <div class="comment-field">
+          <label for="commentTXH">TXH</label>
+          <textarea id="commentTXH" placeholder="TXH's comments on this board"></textarea>
+        </div>
+        <div class="comment-field">
+          <label for="commentZYK">ZYK</label>
+          <textarea id="commentZYK" placeholder="ZYK's comments on this board"></textarea>
+        </div>
+        <div class="save-note" id="saveNote"></div>
       </div>
-      <div class="counter" id="counter"></div>
-      <div class="dots" id="dots"></div>
-      <div class="thumbs" id="thumbs"></div>
-    </div>
-
-    <div class="comments" id="comments">
-      <div class="comment-field">
-        <label for="commentTW">TW</label>
-        <textarea id="commentTW" placeholder="TW's comments on this board"></textarea>
-      </div>
-      <div class="comment-field">
-        <label for="commentTXH">TXH</label>
-        <textarea id="commentTXH" placeholder="TXH's comments on this board"></textarea>
-      </div>
-      <div class="comment-field">
-        <label for="commentZYK">ZYK</label>
-        <textarea id="commentZYK" placeholder="ZYK's comments on this board"></textarea>
-      </div>
-      <div class="save-note" id="saveNote"></div>
     </div>
   </div>
 </div>
@@ -255,8 +272,14 @@ function driveImageUrl(id) { return `https://drive.google.com/thumbnail?id=${id}
 
 // ---- Load comments from Firestore ----
 async function loadComments() {
-  const snap = await DOC_REF.get();
-  commentsMap = snap.exists ? (snap.data().comments || {}) : {};
+  try {
+    const snap = await DOC_REF.get();
+    commentsMap = snap.exists ? (snap.data().comments || {}) : {};
+  } catch (err) {
+    console.error('Failed to load comments from Firestore:', err);
+    statusEl.textContent = 'Comments unavailable — check Firestore setup (see console).';
+    commentsMap = {};
+  }
 }
 
 // ---- List images from the Drive folder ----
