@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Review of Bidding Boards</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #111418;
+    color: #e8e8e8;
+    margin: 0;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; color: #f0f0f0; }
+  .upload-zone {
+    border: 2px dashed #444;
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+    width: 100%;
+    max-width: 640px;
+    cursor: pointer;
+    color: #999;
+    margin-bottom: 20px;
+  }
+  .upload-zone:hover, .upload-zone.drag { border-color: #7aa2ff; color: #ccc; }
+  .upload-zone input { display: none; }
+  .status { font-size: 12px; color: #7aa2ff; min-height: 16px; margin-bottom: 8px; }
+  .slideshow {
+    width: 100%;
+    max-width: 640px;
+    background: #1a1d22;
+    border-radius: 12px;
+    overflow: hidden;
+    display: none;
+  }
+  .slideshow.active { display: block; }
+  .slide-viewport {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .slide-viewport img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .nav-btn {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    background: rgba(0,0,0,0.5); border: none; color: #fff;
+    font-size: 20px; width: 40px; height: 40px; border-radius: 50%;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .nav-btn:hover { background: rgba(0,0,0,0.75); }
+  .nav-btn.prev { left: 12px; }
+  .nav-btn.next { right: 12px; }
+  .delete-btn {
+    position: absolute; top: 10px; right: 10px;
+    background: rgba(0,0,0,0.5); border: none; color: #fff;
+    font-size: 13px; padding: 4px 9px; border-radius: 6px; cursor: pointer;
+  }
+  .delete-btn:hover { background: #c0392b; }
+  .counter { text-align: center; padding: 10px 0 4px; font-size: 13px; color: #999; }
+  .dots { display: flex; justify-content: center; gap: 6px; padding: 4px 0 14px; flex-wrap: wrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; cursor: pointer; border: none; padding: 0; }
+  .dot.active { background: #7aa2ff; }
+  .comments { width: 100%; max-width: 640px; margin-top: 20px; display: none; }
+  .comments.active { display: block; }
+  .comment-field { margin-bottom: 14px; }
+  .comment-field label { display: block; font-size: 13px; color: #aaa; margin-bottom: 6px; }
+  .comment-field textarea {
+    width: 100%; min-height: 80px; resize: vertical;
+    background: #1a1d22; border: 1px solid #333; border-radius: 8px;
+    padding: 10px 12px; color: #e8e8e8; font-family: inherit; font-size: 14px;
+  }
+  .comment-field textarea:focus { outline: none; border-color: #7aa2ff; }
+  .save-note { font-size: 12px; color: #666; }
+  .thumbs { display: flex; gap: 6px; padding: 10px; overflow-x: auto; background: #14161a; }
+  .thumbs img {
+    height: 48px; width: 48px; object-fit: cover; border-radius: 6px;
+    cursor: pointer; opacity: 0.5; flex-shrink: 0; border: 2px solid transparent;
+  }
+  .thumbs img.active { opacity: 1; border-color: #7aa2ff; }
+</style>
+</head>
+<body>
+
+<h1>Review of Bidding Boards</h1>
+
+<label class="upload-zone" id="uploadZone">
+  Click or drag images here to upload
+  <input type="file" id="fileInput" accept="image/*" multiple>
+</label>
+<div class="status" id="status"></div>
+
+<div class="slideshow" id="slideshow">
+  <div class="slide-viewport">
+    <button class="nav-btn prev" id="prevBtn">&#10094;</button>
+    <img id="slideImg" src="" alt="">
+    <button class="nav-btn next" id="nextBtn">&#10095;</button>
+    <button class="delete-btn" id="deleteBtn">Delete</button>
+  </div>
+  <div class="counter" id="counter"></div>
+  <div class="dots" id="dots"></div>
+  <div class="thumbs" id="thumbs"></div>
+</div>
+
+<div class="comments" id="comments">
+  <div class="comment-field">
+    <label for="comment1">Comment 1</label>
+    <textarea id="comment1" placeholder="Notes on composition, subject, etc."></textarea>
+  </div>
+  <div class="comment-field">
+    <label for="comment2">Comment 2</label>
+    <textarea id="comment2" placeholder="Additional thoughts, feedback, etc."></textarea>
+  </div>
+  <div class="save-note" id="saveNote"></div>
+</div>
+
+<!-- Firebase SDKs (compat build, no bundler required) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
+
+<script>
+// ---- Fill in with your Firebase project config (Project settings > General > Your apps) ----
+const firebaseConfig = {
+  apiKey: "AIzaSyCem5EbVUeKJUihyEppP1iPEh6aYNNvKhc",
+  authDomain: "coaching-u26.firebaseapp.com",
+  projectId: "coaching-u26",
+  storageBucket: "coaching-u26.firebasestorage.app",
+  messagingSenderId: "928921692411",
+  appId: "1:928921692411:web:b95f23533ee39461db685e"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const storage = firebase.storage();
+
+// Single shared doc holding image URLs + the two comments
+const DOC_REF = db.collection('slideshows').doc('main');
+
+let images = []; // [{url, path}]
+let current = 0;
+let saveTimer = null;
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const statusEl = document.getElementById('status');
+const slideshow = document.getElementById('slideshow');
+const slideImg = document.getElementById('slideImg');
+const counter = document.getElementById('counter');
+const dots = document.getElementById('dots');
+const thumbs = document.getElementById('thumbs');
+const comments = document.getElementById('comments');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const deleteBtn = document.getElementById('deleteBtn');
+const comment1 = document.getElementById('comment1');
+const comment2 = document.getElementById('comment2');
+const saveNote = document.getElementById('saveNote');
+
+// ---- Load existing state on page load ----
+async function loadState() {
+  const snap = await DOC_REF.get();
+  if (snap.exists) {
+    const data = snap.data();
+    images = data.images || [];
+    comment1.value = data.comment1 || '';
+    comment2.value = data.comment2 || '';
+    current = 0;
+    render();
+  }
+}
+loadState();
+
+// ---- Upload ----
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+['dragover', 'dragleave', 'drop'].forEach(evt => {
+  uploadZone.addEventListener(evt, e => {
+    e.preventDefault();
+    uploadZone.classList.toggle('drag', evt === 'dragover');
+  });
+});
+uploadZone.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
+
+async function handleFiles(fileList) {
+  const files = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+  if (!files.length) return;
+
+  statusEl.textContent = `Uploading 0/${files.length}...`;
+  let done = 0;
+
+  for (const file of files) {
+    const path = `slideshow/${Date.now()}_${file.name}`;
+    const ref = storage.ref(path);
+    await ref.put(file);
+    const url = await ref.getDownloadURL();
+    images.push({ url, path });
+    done++;
+    statusEl.textContent = `Uploading ${done}/${files.length}...`;
+  }
+
+  current = images.length - files.length;
+  statusEl.textContent = 'Saving...';
+  await persistImages();
+  statusEl.textContent = '';
+  render();
+}
+
+// ---- Delete current image ----
+deleteBtn.addEventListener('click', async () => {
+  if (!images.length) return;
+  const img = images[current];
+  await storage.ref(img.path).delete().catch(() => {});
+  images.splice(current, 1);
+  current = Math.max(0, current - 1);
+  await persistImages();
+  render();
+});
+
+async function persistImages() {
+  await DOC_REF.set({ images }, { merge: true });
+}
+
+// ---- Comments: debounce-save on input ----
+[comment1, comment2].forEach((el, idx) => {
+  el.addEventListener('input', () => {
+    saveNote.textContent = 'Saving...';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      await DOC_REF.set({
+        comment1: comment1.value,
+        comment2: comment2.value
+      }, { merge: true });
+      saveNote.textContent = 'Saved';
+      setTimeout(() => saveNote.textContent = '', 1200);
+    }, 600);
+  });
+});
+
+// ---- Render ----
+function render() {
+  if (!images.length) {
+    slideshow.classList.remove('active');
+    comments.classList.toggle('active', true); // comments still usable even with no images
+    return;
+  }
+  slideshow.classList.add('active');
+  comments.classList.add('active');
+
+  current = Math.max(0, Math.min(current, images.length - 1));
+  slideImg.src = images[current].url;
+  counter.textContent = `${current + 1} / ${images.length}`;
+
+  dots.innerHTML = '';
+  images.forEach((_, i) => {
+    const d = document.createElement('button');
+    d.className = 'dot' + (i === current ? ' active' : '');
+    d.addEventListener('click', () => { current = i; render(); });
+    dots.appendChild(d);
+  });
+
+  thumbs.innerHTML = '';
+  images.forEach((img, i) => {
+    const t = document.createElement('img');
+    t.src = img.url;
+    t.className = i === current ? 'active' : '';
+    t.addEventListener('click', () => { current = i; render(); });
+    thumbs.appendChild(t);
+  });
+}
+
+prevBtn.addEventListener('click', () => { current = (current - 1 + images.length) % images.length; render(); });
+nextBtn.addEventListener('click', () => { current = (current + 1) % images.length; render(); });
+document.addEventListener('keydown', e => {
+  if (!images.length) return;
+  if (e.key === 'ArrowLeft') { current = (current - 1 + images.length) % images.length; render(); }
+  if (e.key === 'ArrowRight') { current = (current + 1) % images.length; render(); }
+});
+
+comments.classList.add('active'); // comments visible even before first upload
+</script>
+
+</body>
+</html>
